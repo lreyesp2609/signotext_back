@@ -2,10 +2,38 @@ import os
 import tensorflow as tf
 import cv2
 import numpy as np
+import re
+import json
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from sklearn.model_selection import train_test_split
 
+# Función para limpiar nombres de carpetas con caracteres especiales
+def limpiar_nombre(nombre):
+    return re.sub(r'[<>:"/\\|?*]', '_', nombre)  # Reemplazar caracteres inválidos con '_'
+
+# Función para cargar el mapeo entre nombres originales y sanitizados
+def cargar_mapeo_nombres():
+    archivo_mapeo = './SeniasPalabras/mapeo_nombres.json'
+    if os.path.exists(archivo_mapeo):
+        with open(archivo_mapeo, 'r') as archivo:
+            return json.load(archivo)
+    return {}
+
+# Función para guardar mapeo de nombres
+def guardar_mapeo_nombre(nombre_original, nombre_limpio):
+    archivo_mapeo = './SeniasPalabras/mapeo_nombres.json'
+    if os.path.exists(archivo_mapeo):
+        with open(archivo_mapeo, 'r') as archivo:
+            mapeo = json.load(archivo)
+    else:
+        mapeo = {}
+
+    mapeo[nombre_limpio] = nombre_original
+    with open(archivo_mapeo, 'w') as archivo:
+        json.dump(mapeo, archivo)
+
+# Función para extraer frames de un video
 def extract_frames(video_path, num_frames=10):
     frames = []
     cap = cv2.VideoCapture(video_path)
@@ -23,12 +51,18 @@ def extract_frames(video_path, num_frames=10):
     cap.release()
     return np.array(frames)
 
+# Función para cargar los datos desde las carpetas de clases
 def load_data(data_dir):
     X = []
     y = []
-    class_names = os.listdir(data_dir)
+    mapeo_nombres = cargar_mapeo_nombres()
+    
+    # Listar solo carpetas, ignorando archivos como mapeo_nombres.json
+    class_names = [nombre for nombre in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, nombre))]
+    
     for class_index, class_name in enumerate(class_names):
         class_dir = os.path.join(data_dir, class_name)
+        nombre_original = mapeo_nombres.get(class_name, class_name)  # Recuperar nombre original si está mapeado
         for video_file in os.listdir(class_dir):
             if video_file.endswith('.webm'):
                 video_path = os.path.join(class_dir, video_file)
@@ -38,6 +72,7 @@ def load_data(data_dir):
     
     return np.array(X), np.array(y), class_names
 
+# Función para entrenar el modelo con los videos
 def entrenar_modelo_videos(nombre_archivo):
     # Definir la ruta de las carpetas de entrenamiento
     train_data_dir = './SeniasPalabras'
@@ -84,6 +119,8 @@ def entrenar_modelo_videos(nombre_archivo):
     model.fit(X_train, y_train, batch_size=batch_size, epochs=epochs, validation_data=(X_val, y_val))
 
     # Guardar el modelo entrenado
-    model.save(f"./ModelosPalabras/{nombre_archivo}.keras")
+    if not os.path.exists('./ModelosPalabras'):
+        os.makedirs('./ModelosPalabras')
 
+    model.save(f"./ModelosPalabras/{nombre_archivo}.keras")
     print(f"Modelo guardado como {nombre_archivo}.keras")

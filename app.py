@@ -1,3 +1,4 @@
+import re
 import psycopg2
 from jsonrpc import JSONRPCResponseManager, dispatcher
 from werkzeug.wrappers import Request, Response
@@ -37,9 +38,31 @@ def recibirJsonSenias(nombreSenia, imagenesSenia):
         with open(os.path.join(nombre_carpeta, f"{imagen['id']}_{fecha_actual}.png"), "wb") as archivo:
             archivo.write(contenido_bytes)
 
+# Función para escapar o codificar el nombre de la carpeta
+def limpiar_nombre_carpeta(nombre):
+    return re.sub(r'[<>:"/\\|?*]', '_', nombre)  # Reemplaza caracteres inválidos con '_'
+
+# Función para almacenar el mapeo entre el nombre original y el nombre limpio
+def guardar_mapeo_nombre(nombre_original, nombre_limpio):
+    archivo_mapeo = './SeniasPalabras/mapeo_nombres.json'
+    if not os.path.exists(archivo_mapeo):
+        mapeo = {}
+    else:
+        with open(archivo_mapeo, 'r') as archivo:
+            mapeo = json.load(archivo)
+    
+    mapeo[nombre_limpio] = nombre_original
+    with open(archivo_mapeo, 'w') as archivo:
+        json.dump(mapeo, archivo)
+
 @dispatcher.add_method
 def recibirJsonSeniasPalabras(nombreSenia, videosSenia):
-    nombre_carpeta = f"./SeniasPalabras/{nombreSenia}"
+    nombre_limpio = limpiar_nombre_carpeta(nombreSenia)
+    nombre_carpeta = f"./SeniasPalabras/{nombre_limpio}"
+    
+    # Guardar el mapeo del nombre original con caracteres especiales
+    guardar_mapeo_nombre(nombreSenia, nombre_limpio)
+    
     try:
         if not os.path.exists(nombre_carpeta):
             os.makedirs(nombre_carpeta)
@@ -48,11 +71,9 @@ def recibirJsonSeniasPalabras(nombreSenia, videosSenia):
         return  # Salir de la función si hay un error
 
     for video in videosSenia:
-        # Obtener el contenido base64 del video
         contenido_base64 = video["video"].split(",")[1]
-        # Decodificar el contenido base64
         contenido_bytes = base64.b64decode(contenido_base64)
-        fecha_actual = datetime.now().strftime("%Y%m%d%H%M%S")  # para evitar repeticiones
+        fecha_actual = datetime.now().strftime("%Y%m%d%H%M%S")
         with open(os.path.join(nombre_carpeta, f"{video['id']}_{fecha_actual}.webm"), "wb") as archivo:
             archivo.write(contenido_bytes)
 
@@ -112,38 +133,44 @@ def PredecirImagen(imagen_base64, ModeloAPredecir):
     
 @dispatcher.add_method
 def PredecirVideo(video_base64, ModeloAPredecir):
-    # Crear un diccionario con las carpetas para predecir el modelo
     ruta = './SeniasPalabras/'
+    
+    # Cargar el mapeo entre los nombres originales y los nombres limpios
+    archivo_mapeo = './SeniasPalabras/mapeo_nombres.json'
+    if os.path.exists(archivo_mapeo):
+        with open(archivo_mapeo, 'r') as archivo:
+            mapeo_nombres = json.load(archivo)
+    else:
+        mapeo_nombres = {}
+    
     diccionario_clases = [nombre for nombre in os.listdir(ruta) if os.path.isdir(os.path.join(ruta, nombre))]
-    print(f"Clases disponibles: {diccionario_clases}")
-
-    # Aplicar el padding a la cadena base64 si es necesario
-    def add_padding(s):
-        return s + '=' * ((4 - len(s) % 4) % 4)
+    clases_originales = [mapeo_nombres.get(nombre, nombre) for nombre in diccionario_clases]  # Convertir los nombres limpios a los originales
+    
+    print(f"Clases disponibles: {clases_originales}")
 
     # Aplicar el padding al video base64
+    def add_padding(s):
+        return s + '=' * ((4 - len(s) % 4) % 4)
+    
     video_base64_padded = add_padding(video_base64)
 
     print(f"Modelo: {ModeloAPredecir}")
     print(f"Longitud del video base64: {len(video_base64_padded)}")
-    
+
     try:
         prediccion = predecir_video_base64(ModeloAPredecir, video_base64_padded)
         
         print(f"Predicción: {prediccion}")
         
-        # Obtener el promedio de las predicciones
         resultado_prediccion = np.array(prediccion)
-        promedio_predicciones = np.mean(resultado_prediccion, axis=0)  # Promedio por clase
+        promedio_predicciones = np.mean(resultado_prediccion, axis=0)
         
-        # Obtener la clase predicha con la mayor probabilidad por frame
-        indices_max_probabilidad = np.argmax(resultado_prediccion, axis=1)  # Índices de la clase más alta para cada frame
-        clases_predichas = [diccionario_clases[indice] for indice in indices_max_probabilidad]
-        # Realizar una votación
-        clase_predicha = max(set(clases_predichas), key=clases_predichas.count)  # Clase más común
+        indices_max_probabilidad = np.argmax(resultado_prediccion, axis=1)
+        clases_predichas = [clases_originales[indice] for indice in indices_max_probabilidad]
+        clase_predicha = max(set(clases_predichas), key=clases_predichas.count)
         
         print(f"Clase predicha: {clase_predicha}")
-        return clase_predicha  # Devolver solo la clase predicha
+        return clase_predicha
     except Exception as e:
         print(f"Error en la predicción: {str(e)}")
         return str(e)
