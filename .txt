@@ -1,0 +1,57 @@
+def entrenar_modelo_videos(nombre_archivo):
+    import os
+    import tensorflow as tf
+    from tensorflow.keras.preprocessing.image import ImageDataGenerator
+    import numpy as np
+    
+    # Definir las rutas para los videos de entrenamiento y validación
+    train_data_dir = './SeniasPalabras'
+    validation_data_dir = './SeniasPalabras'
+    
+    # Contar las clases en el directorio de videos
+    num_classes = len(os.listdir(train_data_dir))
+    
+    # Definir parámetros para el procesamiento y generación de datos de video
+    img_height, img_width = 150, 150
+    batch_size = 32
+    epochs = 10
+    
+    # Utilizar un generador de datos similar pero adaptado a secuencias de videos
+    train_datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+    train_generator = train_datagen.flow_from_directory(
+        train_data_dir,
+        target_size=(img_height, img_width),
+        batch_size=batch_size,
+        class_mode='categorical',
+        subset='training')
+    
+    validation_generator = train_datagen.flow_from_directory(
+        validation_data_dir,
+        target_size=(img_height, img_width),
+        batch_size=batch_size,
+        class_mode='categorical',
+        subset='validation')
+    
+    # Definir el modelo de red neuronal convolucional para procesar videos
+    model = tf.keras.models.Sequential([
+        tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(img_height, img_width, 3)),
+        tf.keras.layers.MaxPooling2D(2, 2),
+        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        tf.keras.layers.MaxPooling2D(2, 2),
+        tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
+        tf.keras.layers.MaxPooling2D(2, 2),
+        tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
+        tf.keras.layers.MaxPooling2D(2, 2),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(512, activation='relu'),
+        tf.keras.layers.Dense(num_classes, activation='softmax')
+    ])
+    
+    # Compilar el modelo
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    
+    # Entrenar el modelo
+    model.fit(train_generator, epochs=epochs, validation_data=validation_generator)
+    
+    # Guardar el modelo entrenado
+    model.save(f"./ModelosPalabras/{nombre_archivo}.keras")

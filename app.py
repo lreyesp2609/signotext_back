@@ -11,12 +11,15 @@ from collections import defaultdict
 import os
 import glob
 import random
+
+from EntrenamientoVideo import entrenar_modelo_videos
+from PrediccionVideo import predecir_video_base64
 app = Flask(__name__)
 CORS(app)
 import base64
 import os
 from datetime import datetime
-from Entrenamiento import entrenar_modelo
+from Entrenamiento import *
 from Prediccion import predecir_imagen_base64
 import shutil
 
@@ -34,6 +37,25 @@ def recibirJsonSenias(nombreSenia, imagenesSenia):
         with open(os.path.join(nombre_carpeta, f"{imagen['id']}_{fecha_actual}.png"), "wb") as archivo:
             archivo.write(contenido_bytes)
 
+@dispatcher.add_method
+def recibirJsonSeniasPalabras(nombreSenia, videosSenia):
+    nombre_carpeta = f"./SeniasPalabras/{nombreSenia}"
+    try:
+        if not os.path.exists(nombre_carpeta):
+            os.makedirs(nombre_carpeta)
+    except Exception as e:
+        print(f"Error al crear la carpeta: {e}")
+        return  # Salir de la función si hay un error
+
+    for video in videosSenia:
+        # Obtener el contenido base64 del video
+        contenido_base64 = video["video"].split(",")[1]
+        # Decodificar el contenido base64
+        contenido_bytes = base64.b64decode(contenido_base64)
+        fecha_actual = datetime.now().strftime("%Y%m%d%H%M%S")  # para evitar repeticiones
+        with open(os.path.join(nombre_carpeta, f"{video['id']}_{fecha_actual}.webm"), "wb") as archivo:
+            archivo.write(contenido_bytes)
+
 #Funcion vacia para darle la funcionalidad de generar el modelo 
 @dispatcher.add_method
 def GenerarModelo():
@@ -43,6 +65,17 @@ def GenerarModelo():
     fecha_actual = datetime.now().strftime("%Y%m%d%H%M%S") #para evitar que se puedan repetir
     entrenar_modelo("Modelo"+fecha_actual)
 
+@dispatcher.add_method
+def GenerarModeloPalabra():
+    # Guardar el modelo en una carpeta con la fecha actual en el nombre
+    print("Generando el modelo y guardándolo en una carpeta por fecha...")
+    
+    # Crear carpeta con nombre según la fecha actual
+    fecha_actual = datetime.now().strftime("%Y%m%d%H%M%S")
+
+    # Entrenar el modelo (reutilizando la función `entrenar_modelo`)
+    entrenar_modelo_videos(f"Modelo_{fecha_actual}")
+    
 @dispatcher.add_method
 def PredecirImagen(imagen_base64, ModeloAPredecir):
     # Primero crear un diccionario con las carpetas para predecir el modelo
@@ -73,6 +106,44 @@ def PredecirImagen(imagen_base64, ModeloAPredecir):
 
         print(f"Clase predicha: {clase_predicha}")
         return clase_predicha
+    except Exception as e:
+        print(f"Error en la predicción: {str(e)}")
+        return str(e)
+    
+@dispatcher.add_method
+def PredecirVideo(video_base64, ModeloAPredecir):
+    # Crear un diccionario con las carpetas para predecir el modelo
+    ruta = './SeniasPalabras/'
+    diccionario_clases = [nombre for nombre in os.listdir(ruta) if os.path.isdir(os.path.join(ruta, nombre))]
+    print(f"Clases disponibles: {diccionario_clases}")
+
+    # Aplicar el padding a la cadena base64 si es necesario
+    def add_padding(s):
+        return s + '=' * ((4 - len(s) % 4) % 4)
+
+    # Aplicar el padding al video base64
+    video_base64_padded = add_padding(video_base64)
+
+    print(f"Modelo: {ModeloAPredecir}")
+    print(f"Longitud del video base64: {len(video_base64_padded)}")
+    
+    try:
+        prediccion = predecir_video_base64(ModeloAPredecir, video_base64_padded)
+        
+        print(f"Predicción: {prediccion}")
+        
+        # Obtener el promedio de las predicciones
+        resultado_prediccion = np.array(prediccion)
+        promedio_predicciones = np.mean(resultado_prediccion, axis=0)  # Promedio por clase
+        
+        # Obtener la clase predicha con la mayor probabilidad por frame
+        indices_max_probabilidad = np.argmax(resultado_prediccion, axis=1)  # Índices de la clase más alta para cada frame
+        clases_predichas = [diccionario_clases[indice] for indice in indices_max_probabilidad]
+        # Realizar una votación
+        clase_predicha = max(set(clases_predichas), key=clases_predichas.count)  # Clase más común
+        
+        print(f"Clase predicha: {clase_predicha}")
+        return clase_predicha  # Devolver solo la clase predicha
     except Exception as e:
         print(f"Error en la predicción: {str(e)}")
         return str(e)
@@ -137,9 +208,14 @@ def listar_modelos():
             modelos.append({"nombre": nombre_archivo})
     return json.dumps(modelos)
 
-
-#if __name__ == "__main__":
- #   app.run(host='0.0.0.0', port=81)
+@dispatcher.add_method
+def listar_modelos_videos():
+    ruta_carpeta = "./ModelosPalabras/"
+    modelos = []
+    for nombre_archivo in os.listdir(ruta_carpeta):
+        if nombre_archivo.endswith('.keras'):
+            modelos.append({"nombre": nombre_archivo})
+    return json.dumps(modelos)
 
 @Request.application
 def application(request):
